@@ -21,6 +21,7 @@ private slots:
     void onDisconnected();
     void closeEvent(QCloseEvent *event);
     void playRTSPStream();
+    void streamVideoToServer();
 
 private:
     void login();
@@ -38,6 +39,7 @@ private:
     QVideoWidget *videoWidget;
     QLineEdit *rtspUrlBox;
     QPushButton *playButton;
+    QPushButton *streamButton;
     };
 
 #endif // CHATCLIENT_H

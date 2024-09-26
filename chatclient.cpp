@@ -1,5 +1,4 @@
 #include "chatclient.h"
-#include "ui_chatclient.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHostAddress>
@@ -9,6 +8,10 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QCloseEvent>
+#include <QFileDialog>
+#include <QMediaPlayer>
+#include <QVideoWidget>
+#include <QProcess>
 
 ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
     // Create UI elements
@@ -17,7 +20,6 @@ ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
 
     messageBox = new QLineEdit(this);
     sendButton = new QPushButton("Send", this);
-
 
     // RTSP video playback elements
     videoWidget = new QVideoWidget(this);
@@ -29,7 +31,8 @@ ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
     rtspUrlBox->setPlaceholderText("RTSP Address");
 
     playButton = new QPushButton("Play RTSP", this);  // Play 버튼 생성
-    // Layout setup
+    streamButton = new QPushButton("Stream Video to Server", this);
+
     QHBoxLayout *mainLayout = new QHBoxLayout(this);  // QVBoxLayout에서 QHBoxLayout으로 변경
     QVBoxLayout *inputLayout = new QVBoxLayout();
     inputLayout->addWidget(chatBox);
@@ -42,6 +45,7 @@ ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
     videoLayout->addWidget(videoWidget);
     videoLayout->addWidget(rtspUrlBox);
     videoLayout->addWidget(playButton);
+    videoLayout->addWidget(streamButton);
 
     mainLayout->addLayout(inputLayout);  // 채팅 레이아웃을 왼쪽에 배치
     mainLayout->addLayout(videoLayout);  // 비디오 레이아웃을 오른쪽에 배치
@@ -58,17 +62,22 @@ ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
 
     // Connect RTSP play button
     connect(playButton, &QPushButton::clicked, this, &ChatClient::playRTSPStream);
+    connect(streamButton, &QPushButton::clicked, this, &ChatClient::streamVideoToServer);
 
     // 로그인 과정
     login();
 }
+
 void ChatClient::playRTSPStream() {
-    QString rtspUrl = rtspUrlBox->text();
-    if (!rtspUrl.isEmpty()) {
-        mediaPlayer->setSource(QUrl(rtspUrl));
-        mediaPlayer->play();
-    }
+    qInfo() << "play button 클릭";
+    socket->write("PLAY\n");  // 메시지의 끝을 '\n'으로 구분
 }
+
+void ChatClient::streamVideoToServer() {
+    qInfo() << "stream video to server 클릭";
+    socket->write("WEBCAM_STREAM\n");  // 메시지의 끝을 '\n'으로 구분
+}
+
 
 void ChatClient::login() {
     // 사용자 아이디 및 비밀번호 입력 화면 생성
@@ -135,7 +144,23 @@ void ChatClient::sendMessage() {
 
 void ChatClient::receiveMessage() {
     QByteArray message = socket->readAll();
-    chatBox->append(QString::fromUtf8(message));
+    QString messageStr = QString::fromUtf8(message);
+
+    // 메시지 로그 출력
+    qDebug() << "Received message: " << messageStr;
+
+    // RTSP 스트림을 재생하기 위한 메시지 처리
+    if (messageStr.startsWith("rtsp://")) {
+        // 클라이언트가 RTSP URL을 수신하면 미디어 플레이어로 스트림을 재생
+        rtspUrlBox->setText(messageStr);  // URL을 입력 필드에 표시
+        mediaPlayer->setSource(QUrl(messageStr));  // QMediaPlayer로 스트림 설정
+        mediaPlayer->play();  // 스트림 재생
+
+        chatBox->append("Playing RTSP stream from: " + messageStr);
+    } else {
+        chatBox->append(messageStr);  // 일반 메시지 출력
+        qDebug() << "Non-stream message: " << messageStr;
+    }
 }
 
 void ChatClient::onDisconnected() {
