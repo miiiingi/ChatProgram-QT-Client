@@ -8,6 +8,7 @@
 #include <QFormLayout>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QCloseEvent>
 
 ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
     // Create UI elements
@@ -15,18 +16,35 @@ ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
     chatBox->setReadOnly(true);
 
     messageBox = new QLineEdit(this);
-
     sendButton = new QPushButton("Send", this);
 
+
+    // RTSP video playback elements
+    videoWidget = new QVideoWidget(this);
+    mediaPlayer = new QMediaPlayer(this);
+    mediaPlayer->setVideoOutput(videoWidget);
+
+    rtspUrlBox = new QLineEdit(this);
+    // RTSP 주소 입력 필드에 placeholder 추가
+    rtspUrlBox->setPlaceholderText("RTSP Address");
+
+    playButton = new QPushButton("Play RTSP", this);  // Play 버튼 생성
     // Layout setup
-    QVBoxLayout *mainLayout = new QVBoxLayout(this);
-    QHBoxLayout *inputLayout = new QHBoxLayout();
-    inputLayout->addWidget(messageBox);
-    inputLayout->addWidget(sendButton);
+    QHBoxLayout *mainLayout = new QHBoxLayout(this);  // QVBoxLayout에서 QHBoxLayout으로 변경
+    QVBoxLayout *inputLayout = new QVBoxLayout();
+    inputLayout->addWidget(chatBox);
+    QHBoxLayout *inputMessageLayout = new QHBoxLayout();
+    inputMessageLayout->addWidget(messageBox);
+    inputMessageLayout->addWidget(sendButton);
+    inputLayout->addLayout(inputMessageLayout);
 
-    mainLayout->addWidget(chatBox);
-    mainLayout->addLayout(inputLayout);
+    QVBoxLayout *videoLayout = new QVBoxLayout();
+    videoLayout->addWidget(videoWidget);
+    videoLayout->addWidget(rtspUrlBox);
+    videoLayout->addWidget(playButton);
 
+    mainLayout->addLayout(inputLayout);  // 채팅 레이아웃을 왼쪽에 배치
+    mainLayout->addLayout(videoLayout);  // 비디오 레이아웃을 오른쪽에 배치
     setLayout(mainLayout);
 
     // Create TCP socket
@@ -34,11 +52,22 @@ ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
 
     // Connect signals and slots
     connect(sendButton, &QPushButton::clicked, this, &ChatClient::sendMessage);
+    connect(messageBox, &QLineEdit::returnPressed, this, &ChatClient::sendMessage); // 엔터키로 메시지 전송
     connect(socket, &QTcpSocket::readyRead, this, &ChatClient::receiveMessage);
     connect(socket, &QTcpSocket::disconnected, this, &ChatClient::onDisconnected);
 
+    // Connect RTSP play button
+    connect(playButton, &QPushButton::clicked, this, &ChatClient::playRTSPStream);
+
     // 로그인 과정
     login();
+}
+void ChatClient::playRTSPStream() {
+    QString rtspUrl = rtspUrlBox->text();
+    if (!rtspUrl.isEmpty()) {
+        mediaPlayer->setSource(QUrl(rtspUrl));
+        mediaPlayer->play();
+    }
 }
 
 void ChatClient::login() {
@@ -110,7 +139,20 @@ void ChatClient::receiveMessage() {
 }
 
 void ChatClient::onDisconnected() {
-    QString logoutMessage = username + " logout!";
-    socket->write(logoutMessage.toUtf8());
-    chatBox->append(logoutMessage);
+    chatBox->append("Disconnected from server.");
+}
+
+// 로그아웃 시 서버에 메시지 전송
+void ChatClient::logout() {
+    if (socket->state() == QAbstractSocket::ConnectedState) {
+        QString logoutMessage = username + " logout!";
+        socket->write(logoutMessage.toUtf8());
+        socket->disconnectFromHost();  // 서버에 로그아웃 메시지를 보낸 후 소켓 연결 해제
+    }
+}
+
+// 창이 닫힐 때 로그아웃 처리
+void ChatClient::closeEvent(QCloseEvent *event) {
+    logout();  // 창이 닫힐 때 로그아웃
+    event->accept();
 }

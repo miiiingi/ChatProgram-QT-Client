@@ -6,6 +6,8 @@
 #include <QTextEdit>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QMediaPlayer>
+#include <QVideoWidget>
 
 class ChatClient : public QWidget {
     Q_OBJECT
@@ -14,20 +16,28 @@ public:
     ChatClient(QWidget *parent = nullptr);
 
 private slots:
-    void connectToServer();
     void sendMessage();
     void receiveMessage();
-    void login();
     void onDisconnected();
+    void closeEvent(QCloseEvent *event);
+    void playRTSPStream();
 
 private:
+    void login();
+    void logout();
+    void connectToServer();
+
+    QString username;
     QTcpSocket *socket;
     QTextEdit *chatBox;
     QLineEdit *messageBox;
-    QLineEdit *serverAddress;
     QPushButton *sendButton;
-    QPushButton *connectButton;
-    QString username;
-};
+
+    // Video player elements
+    QMediaPlayer *mediaPlayer;
+    QVideoWidget *videoWidget;
+    QLineEdit *rtspUrlBox;
+    QPushButton *playButton;
+    };
 
 #endif // CHATCLIENT_H
