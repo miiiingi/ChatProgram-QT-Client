@@ -8,6 +8,7 @@
 #include <QPushButton>
 #include <QMediaPlayer>
 #include <QVideoWidget>
+#include <QSlider>
 
 class ChatClient : public QWidget {
     Q_OBJECT
@@ -21,7 +22,12 @@ private slots:
     void onDisconnected();
     void closeEvent(QCloseEvent *event);
     void playRTSPStream();
+    void pauseRTSPStream();
     void streamVideoToServer();
+    void setPosition(int position);
+    void updatePosition(qint64 position);
+    void updateDuration(qint64 duration);
+
 
 private:
     void login();
@@ -39,6 +45,8 @@ private:
     QVideoWidget *videoWidget;
     QLineEdit *rtspUrlBox;
     QPushButton *playButton;
+    QPushButton *pauseButton;
+    QSlider *positionSlider;
     QPushButton *streamButton;
     };
 
