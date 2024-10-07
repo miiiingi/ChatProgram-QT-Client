@@ -201,27 +201,6 @@ void ChatClient::sendMessage() {
     messageBox->clear();
 }
 
-// void ChatClient::receiveMessage() {
-//     QByteArray message = socket->readAll();
-//     QString messageStr = QString::fromUtf8(message);
-
-//     // 메시지 로그 출력
-//     qDebug() << "Received message: " << messageStr;
-
-//     // RTSP 스트림을 재생하기 위한 메시지 처리
-//     if (messageStr.startsWith("rtsp://")) {
-//         // 클라이언트가 RTSP URL을 수신하면 미디어 플레이어로 스트림을 재생
-//         rtspUrlBox->setText(messageStr);  // URL을 입력 필드에 표시
-//         mediaPlayer->setSource(QUrl(messageStr));  // QMediaPlayer로 스트림 설정
-//         mediaPlayer->play();  // 스트림 재생
-
-//         chatBox->append("Playing RTSP stream from: " + messageStr);
-//     } else {
-//         chatBox->append(messageStr);  // 일반 메시지 출력
-//         qDebug() << "Non-stream message: " << messageStr;
-//     }
-// }
-
 void ChatClient::receiveMessage() {
     QByteArray message = socket->readAll();
     QString messageStr = QString::fromUtf8(message);
@@ -231,7 +210,9 @@ void ChatClient::receiveMessage() {
     // 서버로부터 RTSP 주소를 받으면 재생
     if (messageStr.startsWith("rtsp://")) {
         rtspUrlBox->setText(messageStr);  // URL을 입력 필드에 표시
-        mediaPlayer->setSource(QUrl(messageStr));  // QMediaPlayer로 스트림 설정
+
+        // Qt 5.x 버전에서는 setMedia() 사용
+        mediaPlayer->setMedia(QUrl(messageStr));  // QMediaPlayer로 스트림 설정
 
         if (isPaused && pausedPosition > 0) {
             // 일시정지된 상태에서 받은 경우, 정지된 위치부터 재생
