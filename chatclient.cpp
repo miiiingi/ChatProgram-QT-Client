@@ -249,40 +249,59 @@ void ChatClient::processFrame() {
     cv::Mat frame;
     if (rtspCapture.read(frame)) {
         qDebug() << "RTSP Capture Succeed!";
-        
+
+        // 원본 이미지 크기 저장
+        int original_width = frame.cols;
+        int original_height = frame.rows;
+
         // 프레임을 PyTorch/ONNX 모델로 처리
         cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);  // RGB로 변환
 
-        // PyTorch 모델에 맞는 텐서로 변환
+        // PyTorch 모델에 맞는 텐서로 변환 (640x640으로 크기 변경)
+        cv::resize(frame, frame, cv::Size(640, 640));  // 모델이 640x640 크기를 요구한다고 가정
         torch::Tensor imgTensor = torch::from_blob(frame.data, {frame.rows, frame.cols, 3}, torch::kByte);
-	imgTensor = imgTensor.permute({2, 0, 1});
-	imgTensor = imgTensor.toType(torch::kFloat);
-	imgTensor = imgTensor.div(255);
-	imgTensor = imgTensor.unsqueeze(0);
+        imgTensor = imgTensor.permute({2, 0, 1});
+        imgTensor = imgTensor.toType(torch::kFloat);
+        imgTensor = imgTensor.div(255);
+        imgTensor = imgTensor.unsqueeze(0);
 
-	auto output = torchModel.forward({imgTensor});
-	torch::Tensor preds = output.toTensor();
-	std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
-	std::cout << "dets size: " << dets.size()<< "\n";
+        // 모델로 추론
+        auto output = torchModel.forward({imgTensor});
+        torch::Tensor preds = output.toTensor();
+        std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
 
-	if (dets.size() > 0){
-	    for(size_t i = 0; i < dets[0].size(0); ++i){
-		float left = dets[0][i][0].item().toFloat() * frame.cols / 640;
-		float top = dets[0][i][1].item().toFloat() * frame.rows / 480;
-		float right = dets[0][i][2].item().toFloat() * frame.cols / 640;
-		float bottom = dets[0][i][3].item().toFloat() * frame.rows / 480;
-		float score = dets[0][i][4].item().toFloat();
-		int classID = dets[0][i][5].item().toInt();
-		cv::rectangle(frame, cv::Rect(left, top, (right - left), (bottom - top)), cv::Scalar(0, 255, 0), 2);
-	    }
-	}
+        if (dets.size() > 0){
+            for(size_t i = 0; i < dets[0].size(0); ++i){
+                // 모델 출력 좌표는 640x640 기준이므로 원본 이미지 크기로 변환
+                float left = dets[0][i][0].item().toFloat() * original_width / 640;
+                float top = dets[0][i][1].item().toFloat() * original_height / 640;
+                float right = dets[0][i][2].item().toFloat() * original_width / 640;
+                float bottom = dets[0][i][3].item().toFloat() * original_height / 640;
+                float score = dets[0][i][4].item().toFloat();
+                int classID = dets[0][i][5].item().toInt();
+
+                // 바운딩 박스 그리기
+                cv::rectangle(frame, cv::Rect(left, top, (right - left), (bottom - top)), cv::Scalar(0, 255, 0), 2);
+            }
+        }
+
         // OpenCV를 사용해 화면에 출력
         cv::cvtColor(frame, frame, cv::COLOR_RGB2BGR);  // 다시 BGR로 변환 (OpenCV가 BGR을 사용하기 때문)
         QImage qFrame(frame.data, frame.cols, frame.rows, frame.step, QImage::Format_RGB888);
-        videoWidget->setPixmap(QPixmap::fromImage(qFrame));
+
+        // QPixmap으로 변환하여 QLabel에 표시
+        QPixmap pixmap = QPixmap::fromImage(qFrame);
+        videoWidget->setPixmap(pixmap);
+
+        // 이미지 파일로 저장 (PNG 또는 JPG 형식)
+        QString savePath = "capture.png"; // 저장할 경로 및 파일명
+        if (pixmap.save(savePath)) {
+            qDebug() << "Image saved successfully to" << savePath;
+        } else {
+            qDebug() << "Failed to save image to" << savePath;
+        }
     }
 }
-
 
 void ChatClient::loadModel() {
     // PyTorch 모델 로드
