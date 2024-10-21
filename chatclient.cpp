@@ -12,6 +12,15 @@
 #include <QMediaPlayer>
 #include <QVideoWidget>
 #include <QProcess>
+#include <QTimer>
+#include <QLabel>
+#include <opencv2/opencv.hpp>
+#include <algorithm>
+#undef slots
+#include <torch/script.h>
+#include <torch/torch.h>
+#define slots Q_SLOTS
+
 
 ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
     // Create UI elements
@@ -22,11 +31,13 @@ ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
     sendButton = new QPushButton("Send", this);
 
     // RTSP video playback elements
+    /*
     videoWidget = new QVideoWidget(this);
     mediaPlayer = new QMediaPlayer(this);
-    rtspUrlBox = new QLineEdit(this);
-
     mediaPlayer->setVideoOutput(videoWidget);
+    */
+    videoWidget = new QLabel(this);
+    rtspUrlBox = new QLineEdit(this);
 
     playButton = new QPushButton("Play Video", this);  // Play 버튼 이름 변경
     pauseButton = new QPushButton("Pause Video", this);  // Pause 버튼 추가
@@ -64,18 +75,23 @@ ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
     connect(socket, &QTcpSocket::disconnected, this, &ChatClient::onDisconnected);
 
     // Connect RTSP play button
-    // connect(playButton, &QPushButton::clicked, mediaPlayer, &QMediaPlayer::play);
     connect(playButton, &QPushButton::clicked, this, &ChatClient::playRTSPStream);
-    // connect(pauseButton, &QPushButton::clicked, mediaPlayer, &ChatClient::pauseRTSPStream);
     connect(pauseButton, &QPushButton::clicked, this, &ChatClient::pauseRTSPStream);
     connect(streamButton, &QPushButton::clicked, this, &ChatClient::streamVideoToServer);
 
+    frameTimer = new QTimer(this);
+    connect(frameTimer, &QTimer::timeout, this, &ChatClient::processFrame);
+
+    loadModel();
+
     // 비디오 위치 조절 슬라이더 연결
+    /*
     connect(positionSlider, &QSlider::sliderMoved, this, &ChatClient::setPosition);
     connect(mediaPlayer, &QMediaPlayer::positionChanged, this, &ChatClient::updatePosition);
     connect(mediaPlayer, &QMediaPlayer::durationChanged, this, &ChatClient::updateDuration);
+    */
 
-
+    
     // 로그인 과정
     login();
 }
@@ -83,24 +99,13 @@ ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
 qint64 pausedPosition = 0;
 bool isPaused = false;
 
-// void ChatClient::playRTSPStream() {
-//     qInfo() << "play button 클릭";
-//     socket->write("PLAY\n");  // 메시지의 끝을 '\n'으로 구분
-// }
 
-// void ChatClient::pauseRTSPStream() {
-//     // 현재 위치를 저장하고 일시정지
-//     if (mediaPlayer->state() == QMediaPlayer::PlayingState) {
-//         mediaPlayer->pause();  // 스트림 일시정지
-//     }
-// }
 void ChatClient::playRTSPStream() {
     // Play 버튼을 누르면 서버에 PLAY 요청을 보내고, 서버로부터 RTSP 주소를 받음
-    if (isPaused && pausedPosition > 0) {
+    if (isPaused) {
         // 정지된 위치가 있다면 해당 위치에서 재생
-        mediaPlayer->setPosition(pausedPosition);
-        mediaPlayer->play();
-        isPaused = false;  // 다시 재생되면 일시정지 상태 해제
+	frameTimer->start(67);
+	isPaused = false;
     } else {
         // 서버에 PLAY 요청을 보냄
         qInfo() << "play button 클릭, 서버에 PLAY 요청";
@@ -110,11 +115,9 @@ void ChatClient::playRTSPStream() {
 
 void ChatClient::pauseRTSPStream() {
     // 현재 재생 중인 위치를 저장하고 일시정지
-    if (mediaPlayer->playbackRate() == QMediaPlayer::PlayingState) {
-        pausedPosition = mediaPlayer->position();  // 현재 재생 위치 저장
-        mediaPlayer->pause();  // 스트림 일시정지
-        isPaused = true;  // 일시정지 상태 표시
-        qInfo() << "Pause 버튼 클릭, 현재 위치: " << pausedPosition;
+    if(!isPaused){
+	frameTimer->stop();
+	isPaused = true;
     }
 }
 
@@ -203,28 +206,23 @@ void ChatClient::sendMessage() {
 
 void ChatClient::receiveMessage() {
     QByteArray message = socket->readAll();
-    QString messageStr = QString::fromUtf8(message);
+    QString rtspUrl = QString::fromUtf8(message);
 
-    qDebug() << "Received message: " << messageStr;
+    qDebug() << "Received message: " << rtspUrl;
 
     // 서버로부터 RTSP 주소를 받으면 재생
-    if (messageStr.startsWith("rtsp://")) {
-        rtspUrlBox->setText(messageStr);  // URL을 입력 필드에 표시
+    if (rtspUrl.startsWith("rtsp://")) {
+        rtspUrlBox->setText(rtspUrl);  // URL을 입력 필드에 표시
+	if(rtspCapture.open(rtspUrl.toStdString())){
+	    frameTimer->start(67);
+	    chatBox->append("Playing RTSP stream from: " + rtspUrl);
+	} else{
+	    qDebug() << "RTSP 스트림을 열 수 없습니다: " << rtspUrl;
+	}
 
-        // Qt 5.x 버전에서는 setMedia() 사용
-        mediaPlayer->setMedia(QUrl(messageStr));  // QMediaPlayer로 스트림 설정
-
-        if (isPaused && pausedPosition > 0) {
-            // 일시정지된 상태에서 받은 경우, 정지된 위치부터 재생
-            mediaPlayer->setPosition(pausedPosition);
-        }
-        mediaPlayer->play();  // 스트림 재생
-        isPaused = false;  // 재생 중이므로 일시정지 상태 해제
-
-        chatBox->append("Playing RTSP stream from: " + messageStr);
     } else {
-        chatBox->append(messageStr);  // 일반 메시지 출력
-        qDebug() << "Non-stream message: " << messageStr;
+        chatBox->append(rtspUrl);  // 일반 메시지 출력
+        qDebug() << "Non-stream message: " << rtspUrl;
     }
 }
 
@@ -246,3 +244,137 @@ void ChatClient::closeEvent(QCloseEvent *event) {
     logout();  // 창이 닫힐 때 로그아웃
     event->accept();
 }
+
+void ChatClient::processFrame() {
+    cv::Mat frame;
+    if (rtspCapture.read(frame)) {
+        qDebug() << "RTSP Capture Succeed!";
+        
+        // 프레임을 PyTorch/ONNX 모델로 처리
+        cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);  // RGB로 변환
+
+        // PyTorch 모델에 맞는 텐서로 변환
+        torch::Tensor imgTensor = torch::from_blob(frame.data, {frame.rows, frame.cols, 3}, torch::kByte);
+	imgTensor = imgTensor.permute({2, 0, 1});
+	imgTensor = imgTensor.toType(torch::kFloat);
+	imgTensor = imgTensor.div(255);
+	imgTensor = imgTensor.unsqueeze(0);
+
+	auto output = torchModel.forward({imgTensor});
+	torch::Tensor preds = output.toTensor();
+	std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
+	std::cout << "dets size: " << dets.size()<< "\n";
+	/*
+	if(output.isTuple()){
+	    torch::Tensor preds = output.toTuple()->elements()[0].toTensor();
+            std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
+	    std::cout << "output is Tuple\n";
+	} else if(output.isTensor()){
+	    torch::Tensor preds = output.toTensor();
+            std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
+	    std::cout << "output is Tensor\n";
+	}
+	*/
+	if (dets.size() > 0){
+	    for(size_t i = 0; i < dets[0].size(0); ++i){
+		float left = dets[0][i][0].item().toFloat() * frame.cols / 640;
+		float top = dets[0][i][1].item().toFloat() * frame.rows / 480;
+		float right = dets[0][i][2].item().toFloat() * frame.cols / 640;
+		float bottom = dets[0][i][3].item().toFloat() * frame.rows / 480;
+		float score = dets[0][i][4].item().toFloat();
+		int classID = dets[0][i][5].item().toInt();
+		cv::rectangle(frame, cv::Rect(left, top, (right - left), (bottom - top)), cv::Scalar(0, 255, 0), 2);
+
+		/*
+				cv::putText(frame,
+					classnames[classID] + ": " + cv::format("%.2f", score),
+					cv::Point(left, top),
+					cv::FONT_HERSHEY_SIMPLEX, (right - left) / 200, cv::Scalar(0, 255, 0), 2);
+
+					*/
+
+	    }
+	}
+        // OpenCV를 사용해 화면에 출력
+        cv::cvtColor(frame, frame, cv::COLOR_RGB2BGR);  // 다시 BGR로 변환 (OpenCV가 BGR을 사용하기 때문)
+        QImage qFrame(frame.data, frame.cols, frame.rows, frame.step, QImage::Format_RGB888);
+        videoWidget->setPixmap(QPixmap::fromImage(qFrame));
+    }
+}
+
+
+void ChatClient::loadModel() {
+    // PyTorch 모델 로드
+    try {
+        torchModel = torch::jit::load("/home/mingi/workspace/ChatProgram-QT/Client/yolov8n.torchscript");
+        torchModel.eval();
+    } catch (const c10::Error &e) {
+        qDebug() << "PyTorch 모델을 로드하는 데 오류 발생: " << e.what();
+    }
+}
+
+std::vector<torch::Tensor> ChatClient::non_max_suppression(torch::Tensor preds, float score_thresh, float iou_thresh)
+
+{
+        std::vector<torch::Tensor> output;
+        for (size_t i=0; i < preds.sizes()[0]; ++i)
+        {
+            torch::Tensor pred = preds.select(0, i);
+
+            // Filter by scores
+            torch::Tensor scores = pred.select(1, 4) * std::get<0>( torch::max(pred.slice(1, 5, pred.sizes()[1]), 1));
+            pred = torch::index_select(pred, 0, torch::nonzero(scores > score_thresh).select(1, 0));
+            if (pred.sizes()[0] == 0) continue;
+
+            // (center_x, center_y, w, h) to (left, top, right, bottom)
+            pred.select(1, 0) = pred.select(1, 0) - pred.select(1, 2) / 2;
+            pred.select(1, 1) = pred.select(1, 1) - pred.select(1, 3) / 2;
+            pred.select(1, 2) = pred.select(1, 0) + pred.select(1, 2);
+            pred.select(1, 3) = pred.select(1, 1) + pred.select(1, 3);
+
+            // Computing scores and classes
+            std::tuple<torch::Tensor, torch::Tensor> max_tuple = torch::max(pred.slice(1, 5, pred.sizes()[1]), 1);
+            pred.select(1, 4) = pred.select(1, 4) * std::get<0>(max_tuple);
+            pred.select(1, 5) = std::get<1>(max_tuple);
+
+            torch::Tensor  dets = pred.slice(1, 0, 6);
+
+            torch::Tensor keep = torch::empty({dets.sizes()[0]});
+            torch::Tensor areas = (dets.select(1, 3) - dets.select(1, 1)) * (dets.select(1, 2) - dets.select(1, 0));
+            std::tuple<torch::Tensor, torch::Tensor> indexes_tuple = torch::sort(dets.select(1, 4), 0, 1);
+            torch::Tensor v = std::get<0>(indexes_tuple);
+            torch::Tensor indexes = std::get<1>(indexes_tuple);
+            int count = 0;
+            while (indexes.sizes()[0] > 0)
+            {
+                keep[count] = (indexes[0].item().toInt());
+                count += 1;
+
+                // Computing overlaps
+                torch::Tensor lefts = torch::empty(indexes.sizes()[0] - 1);
+                torch::Tensor tops = torch::empty(indexes.sizes()[0] - 1);
+                torch::Tensor rights = torch::empty(indexes.sizes()[0] - 1);
+                torch::Tensor bottoms = torch::empty(indexes.sizes()[0] - 1);
+                torch::Tensor widths = torch::empty(indexes.sizes()[0] - 1);
+                torch::Tensor heights = torch::empty(indexes.sizes()[0] - 1);
+                for (size_t i=0; i<indexes.sizes()[0] - 1; ++i)
+                {
+                    lefts[i] = std::max(dets[indexes[0]][0].item().toFloat(), dets[indexes[i + 1]][0].item().toFloat());
+                    tops[i] = std::max(dets[indexes[0]][1].item().toFloat(), dets[indexes[i + 1]][1].item().toFloat());
+                    rights[i] = std::min(dets[indexes[0]][2].item().toFloat(), dets[indexes[i + 1]][2].item().toFloat());
+                    bottoms[i] = std::min(dets[indexes[0]][3].item().toFloat(), dets[indexes[i + 1]][3].item().toFloat());
+                    widths[i] = std::max(float(0), rights[i].item().toFloat() - lefts[i].item().toFloat());
+                    heights[i] = std::max(float(0), bottoms[i].item().toFloat() - tops[i].item().toFloat());
+                }
+                torch::Tensor overlaps = widths * heights;
+
+                // FIlter by IOUs
+                torch::Tensor ious = overlaps / (areas.select(0, indexes[0].item().toInt()) + torch::index_select(areas, 0, indexes.slice(0, 1, indexes.sizes()[0])) - overlaps);
+                indexes = torch::index_select(indexes, 0, torch::nonzero(ious <= iou_thresh).select(1, 0) + 1);
+            }
+            keep = keep.toType(torch::kInt64);
+            output.push_back(torch::index_select(dets, 0, keep.slice(0, 0, count)));
+        }
+        return output;
+}
+
