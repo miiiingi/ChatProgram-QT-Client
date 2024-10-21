@@ -264,17 +264,7 @@ void ChatClient::processFrame() {
 	torch::Tensor preds = output.toTensor();
 	std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
 	std::cout << "dets size: " << dets.size()<< "\n";
-	/*
-	if(output.isTuple()){
-	    torch::Tensor preds = output.toTuple()->elements()[0].toTensor();
-            std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
-	    std::cout << "output is Tuple\n";
-	} else if(output.isTensor()){
-	    torch::Tensor preds = output.toTensor();
-            std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
-	    std::cout << "output is Tensor\n";
-	}
-	*/
+
 	if (dets.size() > 0){
 	    for(size_t i = 0; i < dets[0].size(0); ++i){
 		float left = dets[0][i][0].item().toFloat() * frame.cols / 640;
@@ -284,15 +274,6 @@ void ChatClient::processFrame() {
 		float score = dets[0][i][4].item().toFloat();
 		int classID = dets[0][i][5].item().toInt();
 		cv::rectangle(frame, cv::Rect(left, top, (right - left), (bottom - top)), cv::Scalar(0, 255, 0), 2);
-
-		/*
-				cv::putText(frame,
-					classnames[classID] + ": " + cv::format("%.2f", score),
-					cv::Point(left, top),
-					cv::FONT_HERSHEY_SIMPLEX, (right - left) / 200, cv::Scalar(0, 255, 0), 2);
-
-					*/
-
 	    }
 	}
         // OpenCV를 사용해 화면에 출력
