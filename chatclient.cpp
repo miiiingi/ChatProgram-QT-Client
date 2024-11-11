@@ -21,6 +21,8 @@
 #include <torch/torch.h>
 #define slots Q_SLOTS
 
+using namespace std;
+
 
 ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
     // Create UI elements
@@ -203,7 +205,6 @@ void ChatClient::sendMessage() {
     chatBox->append("Me: " + messageBox->text());
     messageBox->clear();
 }
-
 void ChatClient::receiveMessage() {
     QByteArray message = socket->readAll();
     QString rtspUrl = QString::fromUtf8(message);
@@ -248,46 +249,52 @@ void ChatClient::closeEvent(QCloseEvent *event) {
 void ChatClient::processFrame() {
     cv::Mat frame;
     if (rtspCapture.read(frame)) {
-        qDebug() << "RTSP Capture Succeed!";
-        
-        // 프레임을 PyTorch/ONNX 모델로 처리
-        cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);  // RGB로 변환
+        // 640x640으로 리사이즈
+        cv::resize(frame, frame, cv::Size(640, 640));
 
-        // PyTorch 모델에 맞는 텐서로 변환
-        torch::Tensor imgTensor = torch::from_blob(frame.data, {frame.rows, frame.cols, 3}, torch::kByte);
-	imgTensor = imgTensor.permute({2, 0, 1});
-	imgTensor = imgTensor.toType(torch::kFloat);
-	imgTensor = imgTensor.div(255);
-	imgTensor = imgTensor.unsqueeze(0);
+        // PyTorch 모델 입력 텐서로 변환
+        torch::Tensor imgTensor = torch::from_blob(frame.data, {1, 640, 640, 3}, torch::kByte);
+        imgTensor = imgTensor.permute({0, 3, 1, 2}).to(torch::kFloat).div(255);
+        cout << "image tensor size: " << imgTensor.sizes() << "\n";
 
-	auto output = torchModel.forward({imgTensor});
-	torch::Tensor preds = output.toTensor();
-	std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
-	std::cout << "dets size: " << dets.size()<< "\n";
+        try {
+            cout << "===========================================\n";
+            auto output = torchModel.forward({imgTensor});
 
-	if (dets.size() > 0){
-	    for(size_t i = 0; i < dets[0].size(0); ++i){
-		float left = dets[0][i][0].item().toFloat() * frame.cols / 640;
-		float top = dets[0][i][1].item().toFloat() * frame.rows / 480;
-		float right = dets[0][i][2].item().toFloat() * frame.cols / 640;
-		float bottom = dets[0][i][3].item().toFloat() * frame.rows / 480;
-		float score = dets[0][i][4].item().toFloat();
-		int classID = dets[0][i][5].item().toInt();
-		cv::rectangle(frame, cv::Rect(left, top, (right - left), (bottom - top)), cv::Scalar(0, 255, 0), 2);
-	    }
-	}
-        // OpenCV를 사용해 화면에 출력
-        cv::cvtColor(frame, frame, cv::COLOR_RGB2BGR);  // 다시 BGR로 변환 (OpenCV가 BGR을 사용하기 때문)
+            // output 타입 확인
+            if (output.isTensor()) {
+                torch::Tensor preds = output.toTensor();
+                std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
+
+                // Detected objects 그리기
+                if (!dets.empty()) {
+                    for (size_t i = 0; i < dets[0].size(0); ++i) {
+                        float left = dets[0][i][0].item().toFloat() * frame.cols / 640;
+                        float top = dets[0][i][1].item().toFloat() * frame.rows / 640;
+                        float right = dets[0][i][2].item().toFloat() * frame.cols / 640;
+                        float bottom = dets[0][i][3].item().toFloat() * frame.rows / 640;
+                        cv::rectangle(frame, cv::Rect(left, top, right - left, bottom - top), cv::Scalar(0, 255, 0), 2);
+                    }
+                }
+            } else {
+                qCritical() << "모델 출력이 예상한 텐서가 아닙니다. 반환된 타입: " << QString::fromStdString(output.type()->str());
+            }
+        } catch (const c10::Error &e) {
+            qCritical() << "모델 추론 중 오류 발생: " << e.what();
+        }
+
+        cv::cvtColor(frame, frame, cv::COLOR_RGB2BGR);
         QImage qFrame(frame.data, frame.cols, frame.rows, frame.step, QImage::Format_RGB888);
         videoWidget->setPixmap(QPixmap::fromImage(qFrame));
     }
 }
 
 
+
 void ChatClient::loadModel() {
     // PyTorch 모델 로드
     try {
-        torchModel = torch::jit::load("/home/mingi/workspace/ChatProgram-QT/Client/yolov8n.torchscript");
+        torchModel = torch::jit::load("/home/mingi/Desktop/workspace/ChatProgram-QT/Client/yolo11n.torchscript");
         torchModel.eval();
     } catch (const c10::Error &e) {
         qDebug() << "PyTorch 모델을 로드하는 데 오류 발생: " << e.what();
