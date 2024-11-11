@@ -2,7 +2,9 @@ cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
 
 # 프로젝트 이름과 C++ 표준 설정
 project(ChatProgramQt LANGUAGES CXX)
-set(CMAKE_CXX_STANDARD 17)
+#set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 14)
+
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O1")
 
 
@@ -44,11 +46,13 @@ find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 # Libtorch 라이브러리 설정
-set(CMAKE_PREFIX_PATH "/usr/local/libtorch")
+set(CMAKE_PREFIX_PATH "/usr/local/pytorch")
 find_package(Torch REQUIRED)
 
 # 컴파일 정의 추가 (cxx11 ABI 사용 설정)
 add_definitions(-D_GLIBCXX_USE_CXX11_ABI=1)
+
+
 
 # Qt5 라이브러리 링크
 target_link_libraries(ChatProgramQt
@@ -67,9 +71,8 @@ target_include_directories(ChatProgramQt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${O
 
 # RPATH 설정
 set_target_properties(ChatProgramQt PROPERTIES
-    INSTALL_RPATH /usr/local/libtorch/lib
+    INSTALL_RPATH /usr/local/pytorch
 )
 
 # 설치 경로 설정 (이 부분은 QNX나 안드로이드 타겟일 때 추가적인 설정)
 install(TARGETS ChatProgramQt DESTINATION /opt/ChatProgramQt/bin)
-

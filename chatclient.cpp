@@ -21,6 +21,8 @@
 #include <torch/torch.h>
 #define slots Q_SLOTS
 
+using namespace std;
+
 
 ChatClient::ChatClient(QWidget *parent) : QWidget(parent), username("") {
     // Create UI elements
@@ -203,7 +205,6 @@ void ChatClient::sendMessage() {
     chatBox->append("Me: " + messageBox->text());
     messageBox->clear();
 }
-
 void ChatClient::receiveMessage() {
     QByteArray message = socket->readAll();
     QString rtspUrl = QString::fromUtf8(message);
@@ -248,6 +249,7 @@ void ChatClient::closeEvent(QCloseEvent *event) {
 void ChatClient::processFrame() {
     cv::Mat frame;
     if (rtspCapture.read(frame)) {
+<<<<<<< HEAD
         qDebug() << "RTSP Capture Succeed!";
 
         // 원본 이미지 크기 저장
@@ -287,6 +289,43 @@ void ChatClient::processFrame() {
 
         // OpenCV를 사용해 화면에 출력
         cv::cvtColor(frame, frame, cv::COLOR_RGB2BGR);  // 다시 BGR로 변환 (OpenCV가 BGR을 사용하기 때문)
+=======
+        // 640x640으로 리사이즈
+        cv::resize(frame, frame, cv::Size(640, 640));
+
+        // PyTorch 모델 입력 텐서로 변환
+        torch::Tensor imgTensor = torch::from_blob(frame.data, {1, 640, 640, 3}, torch::kByte);
+        imgTensor = imgTensor.permute({0, 3, 1, 2}).to(torch::kFloat).div(255);
+        cout << "image tensor size: " << imgTensor.sizes() << "\n";
+
+        try {
+            cout << "===========================================\n";
+            auto output = torchModel.forward({imgTensor});
+
+            // output 타입 확인
+            if (output.isTensor()) {
+                torch::Tensor preds = output.toTensor();
+                std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5);
+
+                // Detected objects 그리기
+                if (!dets.empty()) {
+                    for (size_t i = 0; i < dets[0].size(0); ++i) {
+                        float left = dets[0][i][0].item().toFloat() * frame.cols / 640;
+                        float top = dets[0][i][1].item().toFloat() * frame.rows / 640;
+                        float right = dets[0][i][2].item().toFloat() * frame.cols / 640;
+                        float bottom = dets[0][i][3].item().toFloat() * frame.rows / 640;
+                        cv::rectangle(frame, cv::Rect(left, top, right - left, bottom - top), cv::Scalar(0, 255, 0), 2);
+                    }
+                }
+            } else {
+                qCritical() << "모델 출력이 예상한 텐서가 아닙니다. 반환된 타입: " << QString::fromStdString(output.type()->str());
+            }
+        } catch (const c10::Error &e) {
+            qCritical() << "모델 추론 중 오류 발생: " << e.what();
+        }
+
+        cv::cvtColor(frame, frame, cv::COLOR_RGB2BGR);
+>>>>>>> feature
         QImage qFrame(frame.data, frame.cols, frame.rows, frame.step, QImage::Format_RGB888);
 
         // QPixmap으로 변환하여 QLabel에 표시
@@ -303,10 +342,15 @@ void ChatClient::processFrame() {
     }
 }
 
+<<<<<<< HEAD
+=======
+
+
+>>>>>>> feature
 void ChatClient::loadModel() {
     // PyTorch 모델 로드
     try {
-        torchModel = torch::jit::load("/home/mingi/workspace/ChatProgram-QT/Client/yolov8n.torchscript");
+        torchModel = torch::jit::load("/home/mingi/Desktop/workspace/ChatProgram-QT/Client/yolo11n.torchscript");
         torchModel.eval();
     } catch (const c10::Error &e) {
         qDebug() << "PyTorch 모델을 로드하는 데 오류 발생: " << e.what();
