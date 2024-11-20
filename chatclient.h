@@ -8,8 +8,9 @@
 #include <QMediaPlayer>
 #include <QVideoWidget>
 #include <QSlider>
-#include <opencv2/opencv.hpp>
 #include <QLabel>
+#include <opencv2/opencv.hpp>
+#include <opencv2/dnn.hpp>
 #include <onnxruntime/core/session/onnxruntime_cxx_api.h>
 class ChatClient : public QWidget {
     Q_OBJECT
@@ -29,7 +30,7 @@ private:
     std::vector<std::string> classNames;  // 클래스 이름 저장
     std::vector<cv::Scalar> classColors;  // 클래스별 색상 저장
     QTimer *frameTimer;
-    QLabel videoWidget;
+    QLabel *videoWidget;
     /*
     QString username;
     QTcpSocket *socket;

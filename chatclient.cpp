@@ -13,6 +13,7 @@
 #include <QElapsedTimer>
 
 #include <opencv2/opencv.hpp>
+#include <opencv2/dnn.hpp>
 #include <onnxruntime/core/providers/cuda/cuda_provider_factory.h>
 #include <onnxruntime/core/session/onnxruntime_cxx_api.h>
 
@@ -146,8 +147,17 @@ void ChatClient::runModelInference() {
                 }
             }
 
-            std::vector<int> indices;
-            cv::dnn::NMSBoxes(boxes, confidences, 0.5, 0.4, indices);
+	    std::vector<int> indices;
+	    if (!boxes.empty()) {
+		cv::dnn::NMSBoxes(
+		    boxes,                  // bboxes
+		    confidences,           // scores
+		    0.5f,                  // score_threshold
+		    0.4f,                  // nms_threshold
+		    indices                // indices
+		    // eta와 top_k는 기본값 사용
+		);
+	    }
 
             for (int idx : indices) {
                 const cv::Rect& box = boxes[idx];
