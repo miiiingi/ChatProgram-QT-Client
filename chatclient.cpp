@@ -1,4 +1,5 @@
 #include "chatclient.h"
+#include <random>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHostAddress>
@@ -18,33 +19,15 @@
 #include <onnxruntime/core/session/onnxruntime_cxx_api.h>
 
 ChatClient::ChatClient(QWidget *parent) : QWidget(parent) {
-    // UI Elements
-    /*
-    classNames = {
-        "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
-        "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
-        "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-        "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
-        "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
-        "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-        "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
-        "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
-        "hair drier", "toothbrush"
-    };
-
-    // 클래스 색상 벡터 (랜덤 색상 생성)
-    for (size_t i = 0; i < classNames.size(); ++i) {
-        classColors.push_back(cv::Scalar(rand() % 256, rand() % 256, rand() % 256));
-    }
-    */
-
-    // Layouts
     QHBoxLayout *mainLayout = new QHBoxLayout(this);
 
     streamButton = new QPushButton("Stream", this);
     modelInferenceButton = new QPushButton("Model Inference", this);
     modelInferenceButton->setEnabled(false);
     videoWidget = new QLabel(this);
+
+    videoWidget->setFixedSize(640, 640);  // 초기 크기를 640x640으로 설정
+    videoWidget->setAlignment(Qt::AlignCenter); // 텍스트나 이미지 정렬
 
     QVBoxLayout *videoLayout = new QVBoxLayout();
     videoLayout->addWidget(videoWidget);
@@ -88,12 +71,14 @@ void ChatClient::streamVideoToServer() {
 
 void ChatClient::runModelInference() {
     if (!isWebcamStreaming) return;
-
     cv::Mat frame;
     if (webCam.read(frame)) {
         cv::Mat inputFrame;
         cv::cvtColor(frame, inputFrame, cv::COLOR_BGR2RGB);
-        cv::resize(inputFrame, inputFrame, cv::Size(640, 640));
+	float x_factor = inputFrame.cols / 640;
+	float y_factor = inputFrame.rows / 480;
+	qDebug() << "inputFrame cols:" << inputFrame.cols; //640
+	qDebug() << "inputFrame rows:" << inputFrame.rows; //480
 
         std::vector<float> inputTensorValues(inputFrame.rows * inputFrame.cols * 3);
         for (int y = 0; y < inputFrame.rows; ++y) {
@@ -107,7 +92,7 @@ void ChatClient::runModelInference() {
 
         try {
             auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-            std::array<int64_t, 4> inputShape = {1, 3, 640, 640};
+            std::array<int64_t, 4> inputShape = {1, 3, 480, 640};
 
             Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
                 memory_info, inputTensorValues.data(), inputTensorValues.size(),
@@ -131,45 +116,55 @@ void ChatClient::runModelInference() {
             std::vector<cv::Rect> boxes;
             std::vector<float> confidences;
             std::vector<int> classIds;
+	    float *classes_scores = outputData + 4;
+	    cv::Mat scores(1, classes.size(), CV_32FC1, classes_scores);
+	    cv::Point class_id;
+            double maxClassScore;
+            minMaxLoc(scores, 0, &maxClassScore, 0, &class_id);
+
             qDebug() << "outputSize:" << outputSize;
-            for (size_t i = 0; i < outputSize; i += 6) {
-                float x1 = outputData[i] * frame.cols;
-                float y1 = outputData[i + 1] * frame.rows;
-                float x2 = outputData[i + 2] * frame.cols;
-                float y2 = outputData[i + 3] * frame.rows;
-                float confidence = outputData[i + 4];
-                int classId = static_cast<int>(outputData[i + 5]);
 
-                if (confidence > 0.5) {
-                    boxes.emplace_back(cv::Rect(cv::Point(x1, y1), cv::Point(x2, y2)));
-                    confidences.push_back(confidence);
-                    classIds.push_back(classId);
-                }
+            if (maxClassScore > 0.45)
+            {
+                confidences.push_back(maxClassScore);
+                classIds.push_back(class_id.x);
+
+                float x = outputData[0];
+                float y = outputData[1];
+                float w = outputData[2];
+                float h = outputData[3];
+
+                int left = int((x - 0.5 * w) * x_factor);
+                int top = int((y - 0.5 * h) * y_factor);
+
+                int width = int(w * x_factor);
+                int height = int(h * y_factor);
+
+                boxes.push_back(cv::Rect(left, top, width, height));
             }
 
-	    std::vector<int> indices;
-	    if (!boxes.empty()) {
-		cv::dnn::NMSBoxes(
-		    boxes,                  // bboxes
-		    confidences,           // scores
-		    0.5f,                  // score_threshold
-		    0.4f,                  // nms_threshold
-		    indices                // indices
-		    // eta와 top_k는 기본값 사용
-		);
+	    std::vector<int> nms_result;
+	    cv::dnn::NMSBoxes(boxes, confidences, 0.45, 0.5, nms_result);
+
+	    for (unsigned long i = 0; i < nms_result.size(); ++i)
+	    {
+		int idx = nms_result[i];
+		int class_id = classIds[idx];
+		float confidence = confidences[idx];
+
+		std::random_device rd;
+		std::mt19937 gen(rd());
+		std::uniform_int_distribution<int> dis(100, 255);
+		cv::Scalar color = cv::Scalar(dis(gen),
+					  dis(gen),
+					  dis(gen));
+
+		std::string className = classes[class_id];
+		cv::Rect box = boxes[idx];
+
+                cv::rectangle(frame, box, color, 2);
+                cv::putText(frame, className, cv::Point(box.x, box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1);
 	    }
-
-            for (int idx : indices) {
-                const cv::Rect& box = boxes[idx];
-                int classId = classIds[idx];
-                float confidence = confidences[idx];
-
-                cv::rectangle(frame, box, (0, 255, 0), 2);
-                // cv::rectangle(frame, box, classColors[classId], 2);
-                // std::string label = classNames[classId] + ": " + std::to_string(confidence);
-                // cv::putText(frame, label, cv::Point(box.x, box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, classColors[classId], 1);
-                cv::putText(frame, "label", cv::Point(box.x, box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1);
-            }
 
             cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
             QImage qimg(frame.data, frame.cols, frame.rows, frame.step, QImage::Format_RGB888);
