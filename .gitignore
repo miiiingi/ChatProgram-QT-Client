@@ -74,3 +74,4 @@ CMakeLists.txt.user*
 
 yolo11n.torchscript
 build
+*.onnx
