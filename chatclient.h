@@ -24,6 +24,14 @@ private:
     void logout();
     void connectToServer();
     void runModelInference();
+    void printModelOutputDetails(float* outputData, const Ort::TensorTypeAndShapeInfo& outputShapeInfo);
+    float iou(const cv::Rect& box1, const cv::Rect& box2);
+    std::vector<int> nms(const std::vector<cv::Rect>& boxes, const std::vector<float>& scores, float iouThreshold);
+    cv::Rect scaleBox(const cv::Rect& box);
+    std::tuple<std::vector<cv::Rect>, std::vector<int>, std::vector<float>>
+predict(int width, int height, float* confidences, float* boxes, const std::vector<int64_t>& confidenceDims,
+        const std::vector<int64_t>& boxDims, float probThreshold, float iouThreshold);
+    std::vector<cv::Rect> getBoxes(float* boxes, const std::vector<int64_t>& boxDims, float* confidences, float confThreshold, float nmsThreshold);
     QPushButton *modelInferenceButton;  // 모델 추론 버튼
     cv::VideoCapture webCam; // V4L2 백엔드 사용
     bool isWebcamStreaming = false;  // 웹캠 스트리밍 상태

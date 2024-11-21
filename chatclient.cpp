@@ -73,29 +73,22 @@ void ChatClient::runModelInference() {
     if (!isWebcamStreaming) return;
     cv::Mat frame;
     if (webCam.read(frame)) {
-	cv::imwrite("frame.png", frame);
-	cv::Mat modelInput = frame.clone();
+	cv::Mat modelInput;
+	cv::cvtColor(frame, modelInput, cv::COLOR_BGR2RGB);
+	cv::resize(modelInput, modelInput, cv::Size(640, 480));
 	cv::imwrite("modelInput.png", modelInput);
-	float x_factor = modelInput.cols / 640;
-	float y_factor = modelInput.rows / 480;
 
-	/*
-	cv::Mat blob;
-	cv::dnn::blobFromImage(modelInput, blob, 1.0/255.0, modelShape, cv::Scalar(), true, false);
+        cv::Scalar image_mean = cv::Scalar(127, 127, 127);
+        modelInput.convertTo(modelInput, CV_32F);
+        modelInput = (modelInput - image_mean) / 128.0;
 
-
-	float x_factor = blob.cols / 640;
-	float y_factor = blob.rows / 480;
-	qDebug() << "blob cols:" << blob.cols; //640
-	qDebug() << "blob rows:" << blob.rows; //480
-	*/
-
+        // 채널 순서 변경 (HWC -> CHW)
         std::vector<float> inputTensorValues(modelInput.rows * modelInput.cols * 3);
-        for (int y = 0; y < modelInput.rows; ++y) {
-            for (int x = 0; x < modelInput.cols; ++x) {
-                for (int c = 0; c < 3; ++c) {
-                    inputTensorValues[(c * modelInput.rows + y) * modelInput.cols + x] =
-                        modelInput.at<cv::Vec3b>(y, x)[c] / 255.0f;
+        for (int c = 0; c < 3; ++c) {
+            for (int y = 0; y < modelInput.rows; ++y) {
+                for (int x = 0; x < modelInput.cols; ++x) {
+                    inputTensorValues[(c * modelInput.rows + y) * modelInput.cols + x] = 
+                        modelInput.at<cv::Vec3f>(y, x)[c];
                 }
             }
         }
@@ -111,84 +104,43 @@ void ChatClient::runModelInference() {
 
             Ort::AllocatorWithDefaultOptions allocator;
             Ort::AllocatedStringPtr inputName = model->GetInputNameAllocated(0, allocator);
-            Ort::AllocatedStringPtr outputName = model->GetOutputNameAllocated(0, allocator);
-
             const char* inputNames[] = {inputName.get()};
-            const char* outputNames[] = {outputName.get()};
 
-            std::vector<Ort::Value> outputTensor = model->Run(
-                Ort::RunOptions{nullptr}, inputNames, &inputTensor, 1, outputNames, 1
-            );
+            Ort::AllocatedStringPtr outputName1 = model->GetOutputNameAllocated(0, allocator);
+            Ort::AllocatedStringPtr outputName2 = model->GetOutputNameAllocated(1, allocator);
 
-            float* outputData = outputTensor[0].GetTensorMutableData<float>();
-            size_t outputSize = outputTensor[0].GetTensorTypeAndShapeInfo().GetElementCount();
+            const char* outputNames[] = {outputName1.get(), outputName2.get()};
 
-            std::vector<cv::Rect> boxes;
-            std::vector<float> confidences;
-            std::vector<int> classIds;
-	    float *classes_scores = outputData + 4;
-	    cv::Mat scores(1, classes.size(), CV_32FC1, classes_scores);
-	    cv::Point class_id;
-            double maxClassScore;
-            minMaxLoc(scores, 0, &maxClassScore, 0, &class_id);
+	    // Run model inference
+	    std::vector<Ort::Value> outputTensor = model->Run(
+		Ort::RunOptions{nullptr}, inputNames, &inputTensor, 1, outputNames, 2
+	    );
 
+	    float* confidences = outputTensor[0].GetTensorMutableData<float>();
+	    float* boxes = outputTensor[1].GetTensorMutableData<float>();
 
-	    if (maxClassScore > 0.7)
-	    {
-		confidences.push_back(maxClassScore);
-		classIds.push_back(class_id.x);
+	    Ort::TensorTypeAndShapeInfo confidenceShape = outputTensor[0].GetTensorTypeAndShapeInfo();
+	    Ort::TensorTypeAndShapeInfo boxShape = outputTensor[1].GetTensorTypeAndShapeInfo();
 
-		// YOLOv8의 출력 형식에 맞게 좌표 변환
-		float x = outputData[0];     // 중심 x
-		float y = outputData[1];     // 중심 y
-		float w = outputData[2];     // 너비
-		float h = outputData[3];     // 높이
+	    std::vector<int64_t> confidenceDims = confidenceShape.GetShape();
+	    std::vector<int64_t> boxDims = boxShape.GetShape();
 
-		// 모델의 출력을 이미지 좌표계로 변환
-		int left = int((x - w/2.0) * x_factor);
-		int top = int((y - h/2.0) * y_factor);
-		int width = int(w * x_factor);
-		int height = int(h * y_factor);
-
-		// 경계 좌표 클리핑 (이미지 경계를 벗어나지 않도록)
-		left = std::max(0, left);
-		top = std::max(0, top);
-		width = std::min(width, modelInput.cols - left);
-		height = std::min(height, modelInput.rows - top);
-
-		boxes.push_back(cv::Rect(left, top, width, height));
-
-		qDebug() << "x:" << x;
-		qDebug() << "y:" << y;
-		qDebug() << "w:" << w;
-		qDebug() << "h:" << h;
-		qDebug() << "left:" << left;
-		qDebug() << "top:" << top;
-		qDebug() << "width:" << width;
-		qDebug() << "height:" << height;
-	    }
-
-	    std::vector<int> nms_result;
-	    cv::dnn::NMSBoxes(boxes, confidences, 0.7, 0.7, nms_result);
-
-	    for (unsigned long i = 0; i < nms_result.size(); ++i)
-	    {
-		int idx = nms_result[i];
-		int class_id = classIds[idx];
-		float confidence = confidences[idx];
-
+	    // 메인 코드에서 getBoxes 호출
+	    std::vector<cv::Rect> boxesOut = getBoxes(boxes, boxDims, confidences, 0.99, 0.99); // confThreshold=0.5, nmsThreshold=0.4
+	    for (const auto& box : boxesOut) {
+		// 랜덤한 색상 생성
 		std::random_device rd;
 		std::mt19937 gen(rd());
 		std::uniform_int_distribution<int> dis(100, 255);
-		cv::Scalar color = cv::Scalar(dis(gen),
-					  dis(gen),
-					  dis(gen));
+		cv::Scalar color = cv::Scalar(dis(gen), dis(gen), dis(gen));
 
-		std::string className = classes[class_id];
-		cv::Rect box = boxes[idx];
+		// 박스 그리기
 
-                cv::rectangle(frame, box, color, 2);
-                cv::putText(frame, className, cv::Point(box.x, box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1);
+		cv::rectangle(frame, box, color, 2);
+
+		// 라벨 추가 (여기서는 예제라 "label" 사용)
+		cv::putText(frame, "label", cv::Point(box.x, box.y - 10),
+			    cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1);
 	    }
 
             cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
@@ -225,10 +177,49 @@ void ChatClient::loadModel() {
 
         // ONNX 모델 로드
         model = std::make_unique<Ort::Session>(
-            env, "/home/mingi/workspace/ChatProgram-QT/Client/yolov8n.onnx", session_options
+            env, "/home/mingi/workspace/ChatProgram-QT/Client/version-RFB-640-18.onnx", session_options
         );
         qDebug() << "ONNX 모델 로드 성공!";
     } catch (const Ort::Exception &e) {
         qDebug() << "ONNX 모델 로드 실패: " << e.what();
     }
+}
+
+// NMS를 추가한 getBoxes 함수
+std::vector<cv::Rect> ChatClient::getBoxes(float* boxes, const std::vector<int64_t>& boxDims, float* confidences, float confThreshold, float nmsThreshold) {
+    int numDetections = static_cast<int>(boxDims[1]); // 검출된 박스의 수
+    int boxInfoCount = static_cast<int>(boxDims[2]);  // 박스 정보 (일반적으로 4)
+    std::vector<cv::Rect> boxesList;
+    std::vector<float> scores; // 신뢰도 저장
+
+    // 박스와 신뢰도 추출
+    for (int i = 0; i < numDetections; ++i) {
+        float confidence = confidences[i];
+	std::cout << "confidence: " << confidence;
+        if (confidence > confThreshold) {
+            // 박스 좌표 계산
+            std::vector<float> boxCoords;
+            for (int j = 0; j < boxInfoCount; ++j) {
+                boxCoords.push_back(boxes[i * boxInfoCount + j]);
+            }
+            cv::Rect rect(
+                cv::Point(boxCoords[0] * 640, boxCoords[1] * 480),
+                cv::Point(boxCoords[2] * 640, boxCoords[3] * 480)
+            );
+            boxesList.push_back(rect);
+            scores.push_back(confidence);
+        }
+    }
+
+    // NMS 적용
+    std::vector<int> indices;
+    cv::dnn::NMSBoxes(boxesList, scores, confThreshold, nmsThreshold, indices);
+
+    // NMS 이후의 박스 반환
+    std::vector<cv::Rect> nmsBoxes;
+    for (int idx : indices) {
+        nmsBoxes.push_back(boxesList[idx]);
+    }
+
+    return nmsBoxes;
 }
