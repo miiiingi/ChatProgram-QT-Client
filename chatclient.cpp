@@ -26,7 +26,7 @@ ChatClient::ChatClient(QWidget *parent) : QWidget(parent) {
     modelInferenceButton->setEnabled(false);
     videoWidget = new QLabel(this);
 
-    videoWidget->setFixedSize(640, 640);  // 초기 크기를 640x640으로 설정
+    videoWidget->setFixedSize(480, 640);  // 초기 크기를 640x640으로 설정
     videoWidget->setAlignment(Qt::AlignCenter); // 텍스트나 이미지 정렬
 
     QVBoxLayout *videoLayout = new QVBoxLayout();
@@ -73,26 +73,36 @@ void ChatClient::runModelInference() {
     if (!isWebcamStreaming) return;
     cv::Mat frame;
     if (webCam.read(frame)) {
-        cv::Mat inputFrame;
-        cv::cvtColor(frame, inputFrame, cv::COLOR_BGR2RGB);
-	float x_factor = inputFrame.cols / 640;
-	float y_factor = inputFrame.rows / 480;
-	qDebug() << "inputFrame cols:" << inputFrame.cols; //640
-	qDebug() << "inputFrame rows:" << inputFrame.rows; //480
+	cv::imwrite("frame.png", frame);
+	cv::Mat modelInput = frame.clone();
+	cv::imwrite("modelInput.png", modelInput);
+	float x_factor = modelInput.cols / 640;
+	float y_factor = modelInput.rows / 480;
 
-        std::vector<float> inputTensorValues(inputFrame.rows * inputFrame.cols * 3);
-        for (int y = 0; y < inputFrame.rows; ++y) {
-            for (int x = 0; x < inputFrame.cols; ++x) {
+	/*
+	cv::Mat blob;
+	cv::dnn::blobFromImage(modelInput, blob, 1.0/255.0, modelShape, cv::Scalar(), true, false);
+
+
+	float x_factor = blob.cols / 640;
+	float y_factor = blob.rows / 480;
+	qDebug() << "blob cols:" << blob.cols; //640
+	qDebug() << "blob rows:" << blob.rows; //480
+	*/
+
+        std::vector<float> inputTensorValues(modelInput.rows * modelInput.cols * 3);
+        for (int y = 0; y < modelInput.rows; ++y) {
+            for (int x = 0; x < modelInput.cols; ++x) {
                 for (int c = 0; c < 3; ++c) {
-                    inputTensorValues[(c * inputFrame.rows + y) * inputFrame.cols + x] =
-                        inputFrame.at<cv::Vec3b>(y, x)[c] / 255.0f;
+                    inputTensorValues[(c * modelInput.rows + y) * modelInput.cols + x] =
+                        modelInput.at<cv::Vec3b>(y, x)[c] / 255.0f;
                 }
             }
         }
 
         try {
             auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-            std::array<int64_t, 4> inputShape = {1, 3, 480, 640};
+            std::array<int64_t, 4> inputShape = {1, 3, modelInput.rows, modelInput.cols};
 
             Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
                 memory_info, inputTensorValues.data(), inputTensorValues.size(),
@@ -122,29 +132,44 @@ void ChatClient::runModelInference() {
             double maxClassScore;
             minMaxLoc(scores, 0, &maxClassScore, 0, &class_id);
 
-            qDebug() << "outputSize:" << outputSize;
 
-            if (maxClassScore > 0.45)
-            {
-                confidences.push_back(maxClassScore);
-                classIds.push_back(class_id.x);
+	    if (maxClassScore > 0.7)
+	    {
+		confidences.push_back(maxClassScore);
+		classIds.push_back(class_id.x);
 
-                float x = outputData[0];
-                float y = outputData[1];
-                float w = outputData[2];
-                float h = outputData[3];
+		// YOLOv8의 출력 형식에 맞게 좌표 변환
+		float x = outputData[0];     // 중심 x
+		float y = outputData[1];     // 중심 y
+		float w = outputData[2];     // 너비
+		float h = outputData[3];     // 높이
 
-                int left = int((x - 0.5 * w) * x_factor);
-                int top = int((y - 0.5 * h) * y_factor);
+		// 모델의 출력을 이미지 좌표계로 변환
+		int left = int((x - w/2.0) * x_factor);
+		int top = int((y - h/2.0) * y_factor);
+		int width = int(w * x_factor);
+		int height = int(h * y_factor);
 
-                int width = int(w * x_factor);
-                int height = int(h * y_factor);
+		// 경계 좌표 클리핑 (이미지 경계를 벗어나지 않도록)
+		left = std::max(0, left);
+		top = std::max(0, top);
+		width = std::min(width, modelInput.cols - left);
+		height = std::min(height, modelInput.rows - top);
 
-                boxes.push_back(cv::Rect(left, top, width, height));
-            }
+		boxes.push_back(cv::Rect(left, top, width, height));
+
+		qDebug() << "x:" << x;
+		qDebug() << "y:" << y;
+		qDebug() << "w:" << w;
+		qDebug() << "h:" << h;
+		qDebug() << "left:" << left;
+		qDebug() << "top:" << top;
+		qDebug() << "width:" << width;
+		qDebug() << "height:" << height;
+	    }
 
 	    std::vector<int> nms_result;
-	    cv::dnn::NMSBoxes(boxes, confidences, 0.45, 0.5, nms_result);
+	    cv::dnn::NMSBoxes(boxes, confidences, 0.7, 0.7, nms_result);
 
 	    for (unsigned long i = 0; i < nms_result.size(); ++i)
 	    {
